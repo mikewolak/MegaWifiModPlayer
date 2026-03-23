@@ -1,4 +1,14 @@
 /**
+ * @file mixer.h
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * mixer.h — 8-channel mono mixer with per-channel volume and pan
  *
  * All 8 channels are identical: mono 8-bit PCM or 12-bit ring buffer

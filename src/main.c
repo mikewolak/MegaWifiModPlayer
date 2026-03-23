@@ -1,3 +1,13 @@
+/**
+ * @file main.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
 /*
  * main.c — MegaWifi MOD Player for Sega Genesis
  *

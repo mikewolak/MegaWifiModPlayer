@@ -1,4 +1,14 @@
 /**
+ * @file audio_src_flash.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * audio_src_flash.c — audio source backed by embedded flash data
  */
 #include "audio_src_flash.h"

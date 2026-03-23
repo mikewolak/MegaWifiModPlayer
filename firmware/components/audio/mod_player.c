@@ -1,4 +1,14 @@
 /**
+ * @file mod_player.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * mod_player.c — ProTracker MOD player task using micromod
  *
  * Renders MOD audio and pushes stereo output into two mixer stream

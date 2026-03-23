@@ -1,4 +1,14 @@
 /**
+ * @file audio_player.h
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * audio_player.h — MP3 audio player with ring buffer architecture
  *
  * The PWM ISR always runs at ~44 kHz, consuming stereo samples from a

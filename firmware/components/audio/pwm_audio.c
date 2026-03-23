@@ -1,4 +1,14 @@
 /**
+ * @file pwm_audio.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * pwm_audio.c — ESP32-C3 PWM Audio Driver Implementation
  */
 #include "pwm_audio.h"

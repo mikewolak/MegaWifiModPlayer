@@ -1,4 +1,14 @@
 /**
+ * @file audio_player.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * audio_player.c — Helix fixed-point MP3 decoder task
  *
  * Decodes MP3 frames and pushes LEDC-ready samples into the mixer's

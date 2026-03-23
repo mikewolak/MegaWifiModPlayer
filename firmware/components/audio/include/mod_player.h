@@ -1,4 +1,14 @@
 /**
+ * @file mod_player.h
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
+/**
  * mod_player.h — ProTracker MOD player using micromod
  *
  * Renders MOD audio in a FreeRTOS task and pushes stereo samples

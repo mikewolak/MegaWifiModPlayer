@@ -1,3 +1,13 @@
+/**
+ * @file app_main.c
+ * @brief MegaWifi Audio Subsystem
+ *
+ * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * All rights reserved.
+ *
+ * Part of the MegaWifi MOD Player project.
+ * https://github.com/mikewolak/MegaWifiModPlayer
+ */
 #include <nvs.h>
 #include <nvs_flash.h>
 #include "sdkconfig.h"
