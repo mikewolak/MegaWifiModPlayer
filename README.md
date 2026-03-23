@@ -236,9 +236,6 @@ f_c = 1/(2π × 2200 × 10e-9) = 7,234 Hz
 | **10 nF** | **7.2 kHz** | **−9 dB** | **Recommended** |
 | 22 nF | 3.3 kHz | −15 dB | Warmer, better filtering |
 
-**Always use the Genesis PSU, not USB-C power**, to avoid
-switching noise on the audio bus.
-
 ## Genesis Controls
 
 | Button | Action |
