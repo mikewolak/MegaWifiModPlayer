@@ -193,6 +193,59 @@ source ~/esp/esp-idf/export.sh
 idf.py build
 ```
 
+## Required Hardware Modification
+
+**The MegaWifi Rev B board requires a capacitor swap for audio to work.**
+
+The stock board has C16 and C17 = 1 µF on the PWM audio output path
+(wifi.kicad_sch). This creates a 72 Hz low-pass filter that crushes
+all audio content — music is inaudible (−23 dB at 1 kHz).
+
+### Fix: Replace C16 and C17
+
+| Component | Stock | Required | Footprint |
+|-----------|-------|----------|-----------|
+| C16 | 1 µF | **10 nF** | 0805 SMD |
+| C17 | 1 µF | **10 nF** | 0805 SMD |
+
+These are on the WiFi sub-board (wifi.kicad_sch), in the RC filter
+between the ESP32-C3 PWM outputs and the Genesis cartridge audio bus.
+
+### Filter characteristics after mod
+
+```
+R = 2.2 kΩ (R11/R12, unchanged)
+C = 10 nF (C16/C17, replaced)
+
+Cutoff:  f_c = 1/(2π × 2200 × 10e-9) = 7,234 Hz
+```
+
+| Frequency | Attenuation |
+|-----------|-------------|
+| 1 kHz | −2.8 dB |
+| 5 kHz | −8.3 dB |
+| 7.2 kHz | −3.0 dB (cutoff) |
+| 19.5 kHz (PWM) | −8.6 dB |
+
+The 7.2 kHz cutoff passes most music content. The 19.5 kHz PWM
+switching frequency gets ~9 dB of attenuation — adequate when
+the Genesis is powered from its own PSU (not USB-C).
+
+### Alternative cap values
+
+| Cap | Cutoff | PWM attenuation | Character |
+|-----|--------|-----------------|-----------|
+| 4.7 nF | 15.4 kHz | −2.1 dB | Maximum treble, some PWM whine |
+| **10 nF** | **7.2 kHz** | **−8.6 dB** | **Recommended balance** |
+| 22 nF | 3.3 kHz | −15.4 dB | Warmer, better PWM filtering |
+| 47 nF | 1.5 kHz | −22.3 dB | Very warm, significant rolloff |
+
+### Power supply note
+
+USB-C power through the MegaWifi cartridge injects significant
+switching noise into the Genesis audio chain. **Always use the
+Genesis console's own power supply** for clean audio.
+
 ## Known Issues
 
 - VU meter sprites have minor flicker during playback due to
