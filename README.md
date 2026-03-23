@@ -212,8 +212,10 @@ Word 1 — position:
 
 **The MegaWifi Rev B board requires a capacitor swap for audio.**
 
-The stock C16 and C17 = 1 µF creates a 72 Hz low-pass filter
-that makes all audio inaudible.
+The stock C16 and C17 = 1 µF creates an aggressive 72 Hz low-pass
+filter — similar to a sub-woofer crossover. Only the lowest bass
+frequencies pass through; all midrange, vocals, and treble content
+is severely attenuated (−23 dB at 1 kHz, −37 dB at 5 kHz).
 
 ### Fix: Replace C16 and C17
 
