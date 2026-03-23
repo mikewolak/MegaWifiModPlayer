@@ -1601,4 +1601,77 @@ struct mw_ping_response *mw_ping(const char* domain, u8 retries)
 	return &d.cmd->ping_response;
 }
 
+/************************************************************************//**
+ * \brief Audio subsystem commands (mod_player additions)
+ ****************************************************************************/
+
+/* Audio command IDs — must match firmware megawifi.h */
+#define MW_CMD_AUD_PLAY     59
+#define MW_CMD_AUD_STOP     60
+#define MW_CMD_AUD_PAUSE    61
+#define MW_CMD_AUD_RESUME   62
+#define MW_CMD_AUD_STATUS   63
+#define MW_CMD_AUD_LIST     64
+#define MW_CMD_AUD_VOL      65
+
+#define MW_AUD_TOUT         MS_TO_FRAMES(200)
+
+enum mw_err mw_aud_play(void)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_PLAY;
+	d.cmd->data_len = 0;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_stop(void)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_STOP;
+	d.cmd->data_len = 0;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_pause(void)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_PAUSE;
+	d.cmd->data_len = 0;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_resume(void)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_RESUME;
+	d.cmd->data_len = 0;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_status(uint8_t *state, uint8_t *pattern, uint8_t *row,
+		uint8_t *song_len, uint8_t *amplitudes)
+{
+	enum mw_err err;
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_STATUS;
+	d.cmd->data_len = 0;
+	err = mw_command(MW_AUD_TOUT);
+	if (err != MW_ERR_NONE) return err;
+	if (state)      *state      = d.cmd->data[0];
+	if (pattern)    *pattern    = d.cmd->data[1];
+	if (row)        *row        = d.cmd->data[2];
+	if (song_len)   *song_len   = d.cmd->data[3];
+	if (amplitudes) memcpy(amplitudes, &d.cmd->data[4], 8);
+	return MW_ERR_NONE;
+}
+
+enum mw_err mw_aud_set_vol(uint8_t vol)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_VOL;
+	d.cmd->data_len = 1;
+	d.cmd->data[0] = vol;
+	return mw_command(MW_AUD_TOUT);
+}
+
 #endif // MODULE_MEGAWIFI
