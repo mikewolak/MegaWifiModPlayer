@@ -1,5 +1,4 @@
-out/*.o
-out/*.out
+out/
 nvram/
 cfg/
-out/
+Youtube.md
