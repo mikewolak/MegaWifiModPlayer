@@ -42,7 +42,7 @@ BOOT_SEGA_O   = $(OUT)/sega.o
 MW_OBJS = $(OUT)/megawifi.o $(OUT)/lsd.o $(OUT)/16c550.o $(OUT)/json.o
 
 # Application objects
-APP_OBJS = $(OUT)/main.o
+APP_OBJS = $(OUT)/main.o $(OUT)/reverb_ctrl.o
 
 ALL_OBJS = $(BOOT_SEGA_O) $(APP_OBJS) $(MW_OBJS)
 
@@ -95,6 +95,9 @@ $(OUT)/json.o: $(MW_SRC)/json.c
 ################################################################################
 
 $(OUT)/main.o: $(SRC)/main.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/reverb_ctrl.o: $(SRC)/reverb_ctrl.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 ################################################################################

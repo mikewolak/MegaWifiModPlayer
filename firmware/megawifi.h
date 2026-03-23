@@ -152,6 +152,11 @@
 #define MW_CMD_AUD_STATUS		 63	///< Get status + amplitudes
 #define MW_CMD_AUD_LIST			 64	///< List available MODs
 #define MW_CMD_AUD_VOL			 65	///< Set master volume
+#define MW_CMD_AUD_REVERB_ENABLE	 66	///< Enable/bypass reverb (1 byte)
+#define MW_CMD_AUD_REVERB_PRESET	 67	///< Set reverb preset (1 byte: 0-3)
+#define MW_CMD_AUD_REVERB_MIX		 68	///< Set reverb wet (2 bytes: Q1.14)
+#define MW_CMD_AUD_REVERB_DECAY		 69	///< Set reverb decay (2 bytes: Q1.14)
+#define MW_CMD_AUD_REVERB_SEND		 70	///< Set ch reverb send (2 bytes: ch, level)
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 

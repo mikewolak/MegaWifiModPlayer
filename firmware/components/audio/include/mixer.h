@@ -93,6 +93,40 @@ uint8_t mixer_get_master_vol(void);
  */
 void mixer_get_amplitudes(uint8_t *out);
 
+/* ── Reverb send/return ──────────────────────────────────────────────────── */
+/*
+ * Per-channel reverb send: each channel independently sends a percentage
+ * of its signal (pre-pan) to the FDN reverb. The reverb return mixes
+ * into the stereo bus before master volume.
+ *
+ *   CH ──vol──┬──pan──→ dry bus (L/R)
+ *             └──send──→ reverb bus (mono) ──→ FDN ──→ return (L/R)
+ */
+
+/** Initialise reverb with a preset. Call once at startup. */
+void mixer_reverb_init(uint8_t preset);
+
+/** Enable/bypass the reverb. When disabled, send levels are ignored. */
+void mixer_reverb_enable(bool enable);
+
+/** Query reverb bypass state. */
+bool mixer_reverb_enabled(void);
+
+/** Switch reverb preset (0=room, 1=hall, 2=plate, 3=cave). Reinitialises. */
+void mixer_reverb_set_preset(uint8_t preset);
+
+/** Set reverb wet/dry mix. wet is Q1.14 (0x4000 = 100% wet). */
+void mixer_reverb_set_mix(int16_t wet);
+
+/** Set reverb decay (feedback gain). Q1.14. Higher = longer tail. */
+void mixer_reverb_set_decay(int16_t gain);
+
+/** Set reverb send level for a channel (0–255). */
+void mixer_set_reverb_send(uint8_t ch, uint8_t send);
+
+/** Get reverb send level for a channel. */
+uint8_t mixer_get_reverb_send(uint8_t ch);
+
 #ifdef __cplusplus
 }
 #endif

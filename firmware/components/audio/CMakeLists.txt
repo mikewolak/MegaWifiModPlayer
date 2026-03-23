@@ -6,6 +6,7 @@ if(CONFIG_MW_AUDIO_ENABLE)
         "audio_src_flash.c"
         "micromod.c"
         "mod_player.c"
+        "reverb.c"
         "helix/mp3dec.c"
         "helix/mp3tabs.c"
         "helix/bitstream.c"

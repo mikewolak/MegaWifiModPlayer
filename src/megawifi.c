@@ -1671,4 +1671,57 @@ enum mw_err mw_aud_set_vol(uint8_t vol)
 	return mw_command(MW_AUD_TOUT);
 }
 
+/* Reverb commands */
+#define MW_CMD_AUD_REVERB_ENABLE  66
+#define MW_CMD_AUD_REVERB_PRESET  67
+#define MW_CMD_AUD_REVERB_MIX     68
+#define MW_CMD_AUD_REVERB_DECAY   69
+#define MW_CMD_AUD_REVERB_SEND    70
+
+enum mw_err mw_aud_reverb_enable(uint8_t on)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_REVERB_ENABLE;
+	d.cmd->data_len = 1;
+	d.cmd->data[0] = on;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_reverb_preset(uint8_t preset)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_REVERB_PRESET;
+	d.cmd->data_len = 1;
+	d.cmd->data[0] = preset;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_reverb_mix(int16_t wet)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_REVERB_MIX;
+	d.cmd->data_len = 2;
+	d.cmd->w_data[0] = wet;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_reverb_decay(int16_t gain)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_REVERB_DECAY;
+	d.cmd->data_len = 2;
+	d.cmd->w_data[0] = gain;
+	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_reverb_send(uint8_t ch, uint8_t level)
+{
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_REVERB_SEND;
+	d.cmd->data_len = 2;
+	d.cmd->data[0] = ch;
+	d.cmd->data[1] = level;
+	return mw_command(MW_AUD_TOUT);
+}
+
 #endif // MODULE_MEGAWIFI

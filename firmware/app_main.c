@@ -1,13 +1,3 @@
-/**
- * @file app_main.c
- * @brief MegaWifi Audio Subsystem
- *
- * Copyright (c) 2026 Mike Wolak <mikewolak@gmail.com>
- * All rights reserved.
- *
- * Part of the MegaWifi MOD Player project.
- * https://github.com/mikewolak/MegaWifiModPlayer
- */
 #include <nvs.h>
 #include <nvs_flash.h>
 #include "sdkconfig.h"
@@ -44,6 +34,8 @@ void app_main(void)
 #if CONFIG_MW_AUDIO_ENABLE
 	// Initialize mixer (PWM ISR starts, outputs silence)
 	mixer_init();
+	// Initialize reverb (bypassed by default, Genesis controls it)
+	mixer_reverb_init(0);
 	// Initialize MOD player: CH6=left, CH7=right
 	// Playback starts when Genesis sends MW_CMD_AUD_PLAY
 	mod_player_init(6, 7);

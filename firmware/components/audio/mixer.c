@@ -20,6 +20,7 @@
  */
 #include "mixer.h"
 #include "pwm_audio.h"
+#include "reverb.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -46,6 +47,7 @@ typedef struct {
     ch_type_t       type;
     uint8_t         vol;            /* 0–255 */
     uint8_t         pan;            /* 0=hard left, 128=center, 255=hard right */
+    uint8_t         reverb_send;    /* 0–255: how much of this channel goes to reverb */
     bool            active;
 
     /* Sample mode */
@@ -77,6 +79,11 @@ static struct {
     /* Ring buffer storage — allocated for stream channels only */
     uint16_t        ring_storage[2][RING_SIZE]; /* two stream channels max */
 
+    /* Reverb send/return */
+    reverb_state_t  reverb;
+    bool            reverb_enabled;
+    uint8_t         reverb_return;  /* return level 0-255 */
+
     bool            initialised;
 } s_mix;
 
@@ -93,10 +100,23 @@ static inline uint32_t ch_ring_free(channel_t *c)
 }
 
 /* ── ISR: the mix routine ────────────────────────────────────────────────── */
+/*
+ * Signal flow (per-sample, 44 kHz):
+ *
+ *   CH0..7 ─┬─ vol ─┬─ pan ──→ dry_l, dry_r  (direct stereo bus)
+ *            │       │
+ *            │       └─ send ──→ reverb_bus    (mono send, pre-pan)
+ *            │
+ *   reverb_bus ──→ reverb_process() ──→ rev_l, rev_r
+ *
+ *   output = (dry_l + rev_l) * master ──→ LEDC left
+ *            (dry_r + rev_r) * master ──→ LEDC right
+ */
 static IRAM_ATTR pwm_audio_sample_t mixer_isr(void *ctx)
 {
     int32_t sum_l = 0;
     int32_t sum_r = 0;
+    int32_t reverb_send_bus = 0;    /* mono reverb send */
 
     for (int i = 0; i < MIXER_NUM_CHANNELS; i++) {
         channel_t *ch = &s_mix.ch[i];
@@ -105,17 +125,12 @@ static IRAM_ATTR pwm_audio_sample_t mixer_isr(void *ctx)
         int32_t sample = 0;
 
         if (ch->type == CH_STREAM) {
-            /* Stream: read from ring buffer */
             uint32_t rd = ch->ring_rd;
             if (rd != ch->ring_wr) {
-                /* Ring stores 12-bit unsigned (0–4095), convert to signed */
                 sample = (int32_t)ch->ring[rd & RING_MASK] - 2048;
                 ch->ring_rd = (rd + 1) & RING_MASK;
             }
-            /* else: underrun, sample stays 0 (silence) */
-
         } else if (ch->type == CH_SAMPLE) {
-            /* Sample: 8-bit PCM with rate conversion */
             uint32_t pos = ch->phase >> 16;
             if (pos >= ch->len) {
                 if (ch->loop) {
@@ -136,30 +151,50 @@ static IRAM_ATTR pwm_audio_sample_t mixer_isr(void *ctx)
                 sample = (int32_t)ch->data[pos] - 128;
             }
 
-            /* Scale 8-bit range to ~12-bit range */
             sample <<= 4;
-
             ch->phase += ch->rate;
         }
 
         /* Apply per-channel volume */
         sample = sample * ch->vol >> 8;
 
-        /* Track peak amplitude for VU meters (absolute value, 0-255) */
+        /* Track peak amplitude for VU meters */
         {
             int32_t abs_s = sample < 0 ? -sample : sample;
             if (abs_s > 2047) abs_s = 2047;
-            uint8_t amp8 = abs_s >> 3;  /* 0-2047 → 0-255 */
+            uint8_t amp8 = abs_s >> 3;
             if (amp8 > s_mix.amplitude[i])
                 s_mix.amplitude[i] = amp8;
         }
 
-        /* Pan into stereo field: 0=hard left, 128=center, 255=hard right */
+        /* Reverb send (pre-pan, mono) — each channel sends independently */
+        if (ch->reverb_send > 0) {
+            reverb_send_bus += sample * ch->reverb_send >> 8;
+        }
+
+        /* Pan into stereo field */
         sum_l += sample * (255 - ch->pan) >> 8;
         sum_r += sample * ch->pan >> 8;
     }
 
-    /* Signal decoder when enough samples consumed from streams */
+    /* ── Reverb send/return ─────────────────────────────────────────────── */
+    if (s_mix.reverb_enabled && s_mix.reverb_return > 0) {
+        /* Scale 12-bit send bus up to 16-bit for Freeverb */
+        reverb_send_bus <<= 4;
+        if (reverb_send_bus > 32767) reverb_send_bus = 32767;
+        if (reverb_send_bus < -32768) reverb_send_bus = -32768;
+
+        /* Process mono through Freeverb — returns wet only */
+        int16_t rev_wet = reverb_process_sample(&s_mix.reverb,
+                                                 (int16_t)reverb_send_bus);
+
+        /* Scale return back to 12-bit and apply return level */
+        int32_t ret = ((int32_t)rev_wet * s_mix.reverb_return >> 8) >> 4;
+        sum_l += ret;
+        sum_r += ret;  /* mono reverb to both channels */
+    }
+
+    /* Signal decoder */
     s_mix.consumed_since_signal++;
     if (s_mix.consumed_since_signal >= RING_WATERMARK) {
         s_mix.consumed_since_signal = 0;
@@ -353,4 +388,60 @@ void mixer_get_amplitudes(uint8_t *out)
 uint8_t mixer_get_master_vol(void)
 {
     return s_mix.master_vol;
+}
+
+/* ── Public API: reverb send/return ──────────────────────────────────────── */
+
+void mixer_reverb_init(uint8_t preset)
+{
+    (void)preset;   /* Freeverb has no presets — just init */
+    reverb_init(&s_mix.reverb);
+    s_mix.reverb_enabled = false;
+    s_mix.reverb_return = 128;  /* 50% return level */
+}
+
+void mixer_reverb_enable(bool enable)
+{
+    s_mix.reverb_enabled = enable;
+}
+
+bool mixer_reverb_enabled(void)
+{
+    return s_mix.reverb_enabled;
+}
+
+void mixer_reverb_set_preset(uint8_t preset)
+{
+    /* Map "presets" to roomsize values */
+    static const int16_t sizes[] = { 20000, 27000, 15000, 30000 };
+    if (preset < 4)
+        reverb_set_roomsize(&s_mix.reverb, sizes[preset]);
+}
+
+void mixer_reverb_set_mix(int16_t wet)
+{
+    /* "Mix" controls return level (0-32767 → 0-255) */
+    s_mix.reverb_return = (uint8_t)(wet >> 7);
+    if (s_mix.reverb_return == 0 && wet > 0) s_mix.reverb_return = 1;
+}
+
+void mixer_reverb_set_decay(int16_t gain)
+{
+    /* "Decay" maps to damping — higher = more HF absorption = darker */
+    reverb_set_damping(&s_mix.reverb, gain);
+}
+
+void mixer_set_reverb_send(uint8_t ch, uint8_t send)
+{
+    if (ch < MIXER_NUM_CHANNELS) {
+        s_mix.ch[ch].reverb_send = send;
+    }
+}
+
+uint8_t mixer_get_reverb_send(uint8_t ch)
+{
+    if (ch < MIXER_NUM_CHANNELS) {
+        return s_mix.ch[ch].reverb_send;
+    }
+    return 0;
 }

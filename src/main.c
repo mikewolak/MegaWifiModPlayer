@@ -20,6 +20,7 @@
 #include <string.h>
 #include "ext/mw/megawifi.h"
 #include "ext/mw/mw-msg.h"
+#include "reverb_ctrl.h"
 
 extern void mw_set_draw_hook(void (*hook)(void));
 
@@ -34,6 +35,7 @@ extern enum mw_err mw_aud_set_vol(uint8_t vol);
 
 /* ── Layout ──────────────────────────────────────────────────────────────── */
 #define ROW_TITLE       0
+#define ROW_REVERB      1
 #define ROW_TRACK       2
 #define ROW_STATUS      3
 #define ROW_VU_LABEL    5
@@ -188,11 +190,31 @@ static void init_vu_sprites(void)
     VDP_updateSprites(VU_SPR_TOTAL, CPU);
 }
 
+/* ── Hide all VU sprites (when popup is open) ────────────────────────────── */
+
+static void hide_vu_sprites(void)
+{
+    u8 ch, r;
+    for (ch = 0; ch < 4; ch++) {
+        u8 base = ch * (VU_SPR_PER_CH + 1);
+        for (r = 0; r < VU_SPR_PER_CH; r++)
+            VDP_setSpritePosition(base + r, VU_CH_X(ch), -32);
+        VDP_setSpritePosition(base + VU_SPR_PER_CH, VU_CH_X(ch), -32);
+    }
+    VDP_updateSprites(VU_SPR_TOTAL, CPU);
+}
+
 /* ── Update sprite Y positions ───────────────────────────────────────────── */
 
 static void update_vu_sprites(void)
 {
     u8 ch, r, idx;
+
+    /* Hide sprites while reverb popup is visible */
+    if (reverb_ctrl_active()) {
+        hide_vu_sprites();
+        return;
+    }
 
     for (ch = 0; ch < 4; ch++) {
         u8 raw = g_vu_raw[ch];
@@ -271,12 +293,23 @@ static void draw_volume_text(void)
 
 /* ── Static UI ───────────────────────────────────────────────────────────── */
 
+static void draw_reverb_status(void)
+{
+    bool on = reverb_ctrl_is_enabled();
+    VDP_setTextPalette(on ? PAL1 : PAL3);
+    VDP_drawText(on ? "  Reverb: ON   [START] Settings " :
+                      "  Reverb: OFF  [START] Settings ", 0, ROW_REVERB);
+    VDP_setTextPalette(PAL0);
+}
+
 static void draw_static_ui(void)
 {
     u8 ch; char label[41];
 
     VDP_setTextPalette(PAL3);
     VDP_drawText("====== MEGAWIFI MOD PLAYER ======", 3, ROW_TITLE);
+
+    draw_reverb_status();
 
     memset(label, ' ', 40); label[40] = '\0';
     for (ch = 0; ch < 4; ch++) {
@@ -343,7 +376,10 @@ static const char *marquee_text = "  ~~~  MEGAWIFI MOD PLAYER  ~~~  "
     "Space Debris by Captain (1993)  ~~~  "
     "4-channel ProTracker  ~~~  "
     "Fixed-point decode on ESP32-C3  ~~~  "
-    "8-ch stereo mixer with pan  ~~~  ";
+    "8-ch stereo mixer with pan  ~~~  "
+    "Freeverb reverb plugin (Jezar)  ~~~  "
+    "Per-channel send/return  ~~~  "
+    "[START] Reverb Control  ~~~  ";
 static u16 marquee_scroll_x = 0;
 static u16 marquee_str_pos = 0;
 static bool marquee_needs_init = TRUE;
@@ -392,6 +428,18 @@ static void frame_draw_hook(void)
 
 /* ── Input ───────────────────────────────────────────────────────────────── */
 
+/* Redraw callback when reverb popup closes */
+static void main_redraw(void)
+{
+    VDP_clearPlane(BG_A, TRUE);
+    draw_static_ui();
+    draw_reverb_status();
+    draw_status();
+    draw_volume_bar();
+    draw_volume_text();
+    s_prev_state = 0xFF;
+}
+
 static void handle_input(void)
 {
     u16 joy, pressed;
@@ -401,6 +449,19 @@ static void handle_input(void)
     pressed = joy & ~prev_joy;
     prev_joy = joy;
     if (!g_mw_connected) return;
+
+    /* If reverb popup is open, route all input there */
+    if (reverb_ctrl_active()) {
+        reverb_ctrl_frame(pressed);
+        return;
+    }
+
+    /* START: open reverb control popup */
+    if (pressed & BUTTON_START) {
+        reverb_ctrl_open();
+        return;
+    }
+
     if (pressed & BUTTON_A) mw_aud_play();
     if (pressed & BUTTON_B) mw_aud_stop();
     if (pressed & BUTTON_C) {
@@ -459,13 +520,18 @@ int main(bool hard)
     init_vu_sprites();
 
     JOY_init();
+    reverb_ctrl_init(main_redraw);
 
     VDP_setTextPalette(PAL3);
     VDP_drawText("  Connecting...                 ", 0, ROW_TRACK);
     VDP_setTextPalette(PAL0);
 
     g_mw_connected = megawifi_init();
-    if (!g_mw_connected) {
+    if (g_mw_connected) {
+        /* Send reverb defaults now that MW is connected */
+        reverb_ctrl_send_defaults();
+        draw_reverb_status();
+    } else {
         VDP_setTextPalette(PAL2);
         VDP_drawText("  MegaWifi not found            ", 0, ROW_TRACK);
         VDP_setTextPalette(PAL0);

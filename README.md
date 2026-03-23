@@ -1,16 +1,17 @@
 # MegaWifi MOD Player
 
 A CD-player-style ProTracker MOD music player for the Sega Genesis,
-using the MegaWifi ESP32-C3 cartridge for audio decode and PWM output.
+using the MegaWifi ESP32-C3 cartridge for audio decode, mixing,
+reverb processing, and stereo PWM output.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  ====== MEGAWIFI MOD PLAYER ======                          │
-│                                                             │
+│  Reverb: ON   [START] Settings                              │
 │  FW: v1.5-ec3                                               │
 │  > PLAYING    Pat 03/2A  Row 18/3F                          │
 │                                                             │
-│  CH1    CH2    CH3    CH4                                   │
+│  CH1    CH2    CH3    CH4                                    │
 │  ████   ██     ████   █                                     │
 │  ████   ██     ████   █                                     │
 │  ████   ██     ████                                         │
@@ -22,8 +23,8 @@ using the MegaWifi ESP32-C3 cartridge for audio decode and PWM output.
 │                                                             │
 │  [A]Play [B]Stop [C]Pause [^v]Vol                           │
 │                                                             │
-│  ~~~ Space Debris by Captain (1993) ~~~ 4-channel ~~~       │
-│  ════════════════════════════════════                       │
+│  ~~~ Freeverb reverb plugin ~~~ Per-channel send/return ~~~ │
+│  ════════════════════════════════════                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -31,7 +32,7 @@ using the MegaWifi ESP32-C3 cartridge for audio decode and PWM output.
 
 ```
 ┌──────────────────────┐          ┌─────────────────────────────┐
-│   Sega Genesis 68k   │  UART   │   ESP32-C3 (MegaWifi)        │
+│   Sega Genesis 68k   │  UART   │   ESP32-C3 (MegaWifi)       │
 │                      │ 1.5Mbit │                              │
 │  ┌────────────────┐  │  LSD    │  ┌────────────────────────┐  │
 │  │ Transport UI   │──┼─────────┼─→│ MegaWifi FSM           │  │
@@ -45,13 +46,20 @@ using the MegaWifi ESP32-C3 cartridge for audio decode and PWM output.
 │  └────────────────┘  │         │             │                │
 │                      │         │  ┌──────────▼─────────────┐  │
 │  ┌────────────────┐  │         │  │ 8-Channel Mixer        │  │
-│  │ Marquee        │  │         │  │ Per-ch vol + pan       │  │
-│  │ Pixel scroll   │  │         │  │ 44 kHz ISR             │  │
-│  └────────────────┘  │         │  └──────────┬─────────────┘  │
-│                      │         │             │                │
-│  SGDK + mw-api       │         │  ┌──────────▼─────────────┐  │
-│                      │         │  │ PWM Audio Driver       │  │
-└──────────────────────┘         │  │ 12-bit LEDC @ 19.5kHz  │  │
+│  │ Reverb Control │  │         │  │ Per-ch vol + pan       │  │
+│  │ START popup    │──┼─────────┼─→│ Per-ch reverb send     │  │
+│  └────────────────┘  │         │  │ 44 kHz ISR             │  │
+│                      │         │  └──┬───────┬─────────────┘  │
+│  ┌────────────────┐  │         │     │       │                │
+│  │ Marquee        │  │         │     │  ┌────▼─────────────┐  │
+│  │ Pixel scroll   │  │         │     │  │ Freeverb         │  │
+│  └────────────────┘  │         │     │  │ Send/Return bus  │  │
+│                      │         │     │  │ Jezar algorithm   │  │
+│  SGDK + mw-api      │         │     │  └────┬─────────────┘  │
+│                      │         │     │       │                │
+└──────────────────────┘         │  ┌──▼───────▼─────────────┐  │
+                                 │  │ PWM Audio Driver       │  │
+                                 │  │ 12-bit LEDC @ 19.5kHz  │  │
                                  │  │ GPIO4(L) GPIO5(R)      │  │
                                  │  └──────────┬─────────────┘  │
                                  │             │                │
@@ -64,142 +72,148 @@ using the MegaWifi ESP32-C3 cartridge for audio decode and PWM output.
                                           (cart B8/B9)
 ```
 
-## Audio Subsystem
+## Mixer Signal Flow
 
-### Mixer — 8 Uniform Mono Channels
+```
+CH0 ──vol──┬──pan──→ dry bus L/R ──┐
+CH1 ──vol──┤                       │
+ ...       ├──send──→ reverb bus ──┤
+CH6 ──vol──┤            │          │
+CH7 ──vol──┘            ▼          │
+                    ┌────────┐     │
+                    │Freeverb│     │
+                    │8 comb  │     │
+                    │4 allpas│     │
+                    └───┬────┘     │
+                        │          │
+              return ←──┘          │
+                 │                 │
+                 ▼                 ▼
+              mix L/R = dry + (return × level)
+                        │
+                   master vol
+                        │
+                  12-bit clamp
+                        │
+                    LEDC PWM
+```
 
-All 8 channels (0–7) are identical with independent:
+Each of the 8 channels independently controls:
 - **Volume**: 0–255
 - **Pan**: 0 (hard left) → 128 (center) → 255 (hard right)
+- **Reverb send**: 0–255 (how much goes to the reverb bus)
 
-Two channel types:
-- **SAMPLE**: 8-bit unsigned PCM with fixed-point sample rate conversion,
-  optional linear interpolation, looping
-- **STREAM**: ring buffer fed by a decoder task (MOD or MP3)
+The reverb runs continuously — when the MOD stops, the tail
+decays naturally through the allpass/comb filter network.
 
-By convention, the MOD/MP3 player uses CH6 (left) and CH7 (right).
-Channels 0–5 are available for sound effects.
+## Reverb Engine
 
-### Decoders
+Jezar's Freeverb algorithm (Schroeder-Moorer topology), ported
+from PaulStoffregen's Teensy Audio Library to pure C fixed-point.
 
-| Decoder | Format | Type | Notes |
-|---------|--------|------|-------|
-| **micromod** | ProTracker MOD (4/8 ch) | Fixed-point | 669 lines, BSD-3 |
-| **Helix** | MP3 (Layer III) | Fixed-point | RPSL license |
+- 8 parallel comb filters (delay + damped feedback)
+- 4 series allpass filters (diffusion)
+- All int16/int32 arithmetic, no float
+- ~23 KB RAM for delay line buffers
+- Runs per-sample at 44 kHz inside the mixer ISR
 
-minimp3 was evaluated but rejected — float-based, too slow on the
-FPU-less ESP32-C3 RISC-V core.
+### Reverb Controls (Genesis START menu)
 
-### PWM Output
+```
+┌─────────────────────────────────────────┐
+│ ---- REVERB CONTROL ---- START=close -- │
+│                                         │
+│ > Reverb:  [ON]  off                    │
+│   Preset:  < CAVE >                     │
+│   Mix:     ████████████░░░░░░░░  51%    │
+│   Decay:   ████████████████░░░░  82%    │
+│ ---- CHANNEL SENDS ----                 │
+│   CH1:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH2:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH3:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH4:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH5:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH6:     ░░░░░░░░░░░░░░░░░░░░   0%   │
+│   CH7:     ██████████░░░░░░░░░░  51%   │
+│   CH8:     ██████████░░░░░░░░░░  51%   │
+│ ─────────────────────────────────────── │
+└─────────────────────────────────────────┘
+```
 
-| Parameter | Value |
-|-----------|-------|
-| GPIO L / R | 4 / 5 |
-| Resolution | 12-bit (4096 levels) |
-| PWM frequency | 19,531 Hz (APB 80 MHz / 4096) |
-| Sample rate | 44,053 Hz (GPTimer 10 MHz / 227) |
-| Midscale (silence) | 2048 |
-| RC filter | R=2.2 kΩ, C=10 nF → f_c ≈ 7.2 kHz |
+| Control | Action |
+|---------|--------|
+| Up/Down | Navigate parameters |
+| Left/Right | Adjust value (±10 per press) |
+| A | Toggle bypass on/off |
+| START | Close popup |
+
+Presets map to Freeverb roomsize values:
+- **Room**: small, short decay
+- **Hall**: concert hall, medium decay
+- **Plate**: dense, fast build
+- **Cave**: long, dark tail (default)
 
 ## Command Protocol
 
 Genesis communicates with the ESP32-C3 over the MegaWifi LSD
-protocol on control channel 0. Commands are standard MegaWifi
-`mw_cmd` packets.
+protocol on control channel 0.
 
 ### Audio Commands
 
 | Command | ID | Direction | Payload | Description |
 |---------|---:|-----------|---------|-------------|
-| `MW_CMD_AUD_PLAY` | 59 | Gen→ESP | — | Play embedded MOD (instant restart) |
+| `MW_CMD_AUD_PLAY` | 59 | Gen→ESP | — | Play MOD (instant restart) |
 | `MW_CMD_AUD_STOP` | 60 | Gen→ESP | — | Stop playback |
-| `MW_CMD_AUD_PAUSE` | 61 | Gen→ESP | — | Pause (ring buffer preserved) |
-| `MW_CMD_AUD_RESUME` | 62 | Gen→ESP | — | Resume from pause |
-| `MW_CMD_AUD_STATUS` | 63 | Gen←ESP | 8 bytes | Packed status (see below) |
-| `MW_CMD_AUD_LIST` | 64 | Gen←ESP | — | Reserved for track listing |
-| `MW_CMD_AUD_VOL` | 65 | Gen→ESP | 1 byte (vol) | Set master volume 0–255 |
+| `MW_CMD_AUD_PAUSE` | 61 | Gen→ESP | — | Pause |
+| `MW_CMD_AUD_RESUME` | 62 | Gen→ESP | — | Resume |
+| `MW_CMD_AUD_STATUS` | 63 | Gen←ESP | 8 bytes | Packed status |
+| `MW_CMD_AUD_LIST` | 64 | Gen←ESP | — | Reserved |
+| `MW_CMD_AUD_VOL` | 65 | Gen→ESP | 1 byte | Master volume 0–255 |
 
-### Packed Status Response (8 bytes = 2 × u32, big-endian)
+### Reverb Commands
+
+| Command | ID | Direction | Payload | Description |
+|---------|---:|-----------|---------|-------------|
+| `MW_CMD_AUD_REVERB_ENABLE` | 66 | Gen→ESP | 1 byte | Enable/bypass (0 or 1) |
+| `MW_CMD_AUD_REVERB_PRESET` | 67 | Gen→ESP | 1 byte | Preset (0–3) |
+| `MW_CMD_AUD_REVERB_MIX` | 68 | Gen→ESP | 2 bytes | Return level (Q1.14) |
+| `MW_CMD_AUD_REVERB_DECAY` | 69 | Gen→ESP | 2 bytes | Damping (Q1.14) |
+| `MW_CMD_AUD_REVERB_SEND` | 70 | Gen→ESP | 2 bytes | ch + level (0–255) |
+
+### Packed Status Response (8 bytes)
 
 ```
 Word 0 — VU + state:
   [31:30]  state       0=stopped, 1=playing, 2=paused
-  [29:23]  CH4 amp     0–127 (maps directly to pixel height)
+  [29:23]  CH4 amp     0–127 (pixel height)
   [22:16]  CH3 amp     0–127
   [15:9]   CH2 amp     0–127
   [8:2]    CH1 amp     0–127
   [1:0]    reserved
 
 Word 1 — position:
-  [31:24]  pattern     current pattern in sequence
-  [23:16]  row         current row (0–63)
-  [15:8]   song_len    total patterns
-  [7:0]    master_vol  current master volume
+  [31:24]  pattern
+  [23:16]  row (0–63)
+  [15:8]   song_len
+  [7:0]    master_vol
 ```
 
-Amplitudes are tracked at the 44 kHz sample rate inside micromod's
-inner render loop (not the volume envelope). Peak-and-clear on read.
-Scaled to 0–127 to map directly to VU pixel height without math on
-the 68000 side.
+## PWM Output
 
-## Genesis Application
-
-Built with SGDK and the MegaWifi API (`mw-api`).
-
-### Controls
-
-| Button | Action |
-|--------|--------|
-| **A** | Play (instant restart — rapid press = rapid restart) |
-| **B** | Stop |
-| **C** | Pause / Resume toggle |
-| **Up** | Volume up (+10) |
-| **Down** | Volume down (−10) |
-| **Start** | Track select (reserved) |
-
-### Display
-
-- **Status line**: state + pattern/row counter (flicker-free padded writes)
-- **VU meters**: 68 sprites, 4 channels × 16 rows + 4 peak hold lines.
-  Green (bottom 60%) → Yellow (60–80%) → Red (top 20%).
-  Ballistic IIR smoothing: fast attack (75%/frame), slow decay (1/8+1/frame).
-  Peak hold with gravity fall.
-- **Volume bar**: solid blue tiles on BG_A
-- **Marquee**: pixel-smooth scroll via VDP HSCROLL_TILE mode (1 px/frame)
-
-### Build
-
-```sh
-cd ~/MegaWifi/mod_player
-make
-# ROM: out/mod_player.bin
-```
-
-Requires:
-- `m68k-elf-gcc` cross toolchain
-- SGDK at `~/sgdk`
-- MegaWifi API in SGDK (`ext/mw/`)
-
-### Firmware
-
-The ESP32-C3 firmware lives in a separate repository:
-[mw-fw-rtos](https://github.com/mikewolak/mw-fw-rtos)
-
-Build with ESP-IDF v5.x:
-```sh
-cd ~/MegaWifi/mw-fw-rtos
-source ~/esp/esp-idf/export.sh
-# Enable audio in menuconfig: MegaWiFi options → Enable PWM audio
-idf.py build
-```
+| Parameter | Value |
+|-----------|-------|
+| GPIO L / R | 4 / 5 |
+| Resolution | 12-bit (4096 levels) |
+| PWM frequency | 19,531 Hz |
+| Sample rate | 44,053 Hz |
+| RC filter | R=2.2 kΩ, C=10 nF → f_c ≈ 7.2 kHz |
 
 ## Required Hardware Modification
 
-**The MegaWifi Rev B board requires a capacitor swap for audio to work.**
+**The MegaWifi Rev B board requires a capacitor swap for audio.**
 
-The stock board has C16 and C17 = 1 µF on the PWM audio output path
-(wifi.kicad_sch). This creates a 72 Hz low-pass filter that crushes
-all audio content — music is inaudible (−23 dB at 1 kHz).
+The stock C16 and C17 = 1 µF creates a 72 Hz low-pass filter
+that makes all audio inaudible.
 
 ### Fix: Replace C16 and C17
 
@@ -208,62 +222,70 @@ all audio content — music is inaudible (−23 dB at 1 kHz).
 | C16 | 1 µF | **10 nF** | 0805 SMD |
 | C17 | 1 µF | **10 nF** | 0805 SMD |
 
-These are on the WiFi sub-board (wifi.kicad_sch), in the RC filter
-between the ESP32-C3 PWM outputs and the Genesis cartridge audio bus.
-
-### Filter characteristics after mod
+### Filter after mod
 
 ```
-R = 2.2 kΩ (R11/R12, unchanged)
-C = 10 nF (C16/C17, replaced)
-
-Cutoff:  f_c = 1/(2π × 2200 × 10e-9) = 7,234 Hz
+f_c = 1/(2π × 2200 × 10e-9) = 7,234 Hz
 ```
 
-| Frequency | Attenuation |
-|-----------|-------------|
-| 1 kHz | −2.8 dB |
-| 5 kHz | −8.3 dB |
-| 7.2 kHz | −3.0 dB (cutoff) |
-| 19.5 kHz (PWM) | −8.6 dB |
+| Cap | Cutoff | PWM attenuation | Notes |
+|-----|--------|-----------------|-------|
+| 4.7 nF | 15.4 kHz | −2 dB | Max treble, some PWM whine |
+| **10 nF** | **7.2 kHz** | **−9 dB** | **Recommended** |
+| 22 nF | 3.3 kHz | −15 dB | Warmer, better filtering |
 
-The 7.2 kHz cutoff passes most music content. The 19.5 kHz PWM
-switching frequency gets ~9 dB of attenuation — adequate when
-the Genesis is powered from its own PSU (not USB-C).
+**Always use the Genesis PSU, not USB-C power**, to avoid
+switching noise on the audio bus.
 
-### Alternative cap values
+## Genesis Controls
 
-| Cap | Cutoff | PWM attenuation | Character |
-|-----|--------|-----------------|-----------|
-| 4.7 nF | 15.4 kHz | −2.1 dB | Maximum treble, some PWM whine |
-| **10 nF** | **7.2 kHz** | **−8.6 dB** | **Recommended balance** |
-| 22 nF | 3.3 kHz | −15.4 dB | Warmer, better PWM filtering |
-| 47 nF | 1.5 kHz | −22.3 dB | Very warm, significant rolloff |
+| Button | Action |
+|--------|--------|
+| **A** | Play (instant restart) |
+| **B** | Stop |
+| **C** | Pause / Resume |
+| **Up/Down** | Master volume |
+| **START** | Open/close reverb control panel |
 
-### Power supply note
+## Build
 
-USB-C power through the MegaWifi cartridge injects significant
-switching noise into the Genesis audio chain. **Always use the
-Genesis console's own power supply** for clean audio.
+### Genesis ROM
+
+```sh
+cd ~/MegaWifi/mod_player
+make
+# ROM: out/mod_player.bin
+```
+
+Requires: `m68k-elf-gcc`, SGDK at `~/sgdk`
+
+### ESP32-C3 Firmware
+
+```sh
+cd ~/MegaWifi/mw-fw-rtos
+source ~/esp/esp-idf/export.sh
+# Enable audio: idf.py menuconfig → MegaWiFi options → Enable PWM audio
+idf.py build
+```
+
+Firmware repo: [mw-fw-rtos](https://github.com/mikewolak/mw-fw-rtos)
 
 ## Known Issues
 
-- VU meter sprites have minor flicker during playback due to
-  `mw_command()` blocking across frame boundaries. The poll's
-  internal `TSK_superPend()` causes SGDK VSync processing that
-  disrupts the VDP write/sprite update timing.
-- Audio has a 7.2 kHz low-pass rolloff from the RC filter
-  (R=2.2 kΩ, C=10 nF). Acceptable for game audio and tracker music.
+- VU meter sprites have minor flicker due to `mw_command()` blocking
+  across frame boundaries during status polling.
+- 7.2 kHz filter rolloff from the RC network. Acceptable for tracker
+  music and game audio.
 - Model 2 Genesis has inherent audio noise from the ASIC mixer.
-  USB-C power makes it worse — use the Genesis PSU.
 
 ## License
 
 - Genesis application: MIT
+- Freeverb: MIT (Paul Stoffregen / PJRC, original Jezar public domain)
 - micromod: BSD-3-Clause (Martin Cameron)
 - Helix MP3 decoder: RPSL (RealNetworks)
 - MegaWifi firmware: GPL-3.0 (upstream by doragasu)
 
 ---
 
-*March 2026 — Mike Wolak*
+*March 2026 — Mike Wolak <mikewolak@gmail.com>*
