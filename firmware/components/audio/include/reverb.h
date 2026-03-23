@@ -2,9 +2,8 @@
  * @file reverb.h
  * @brief Fixed-point Freeverb (Jezar/Schroeder-Moorer)
  *
- * Ported from PaulStoffregen/Audio (Teensy Audio Library), MIT license.
  * Original: Jezar at Dreampoint, public domain.
- * Port to pure C: (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * Fixed-point C port: (c) 2026 Mike Wolak <mikewolak@gmail.com>
  *
  * No float, no malloc, no external dependencies.
  * ~23 KB RAM for mono, int16 throughout.

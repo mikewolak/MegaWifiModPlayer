@@ -109,7 +109,7 @@ decays naturally through the allpass/comb filter network.
 ## Reverb Engine
 
 Jezar's Freeverb algorithm (Schroeder-Moorer topology), ported
-from PaulStoffregen's Teensy Audio Library to pure C fixed-point.
+to pure C fixed-point for ESP32-C3.
 
 - 8 parallel comb filters (delay + damped feedback)
 - 4 series allpass filters (diffusion)
@@ -281,7 +281,7 @@ Firmware repo: [mw-fw-rtos](https://github.com/mikewolak/mw-fw-rtos)
 ## License
 
 - Genesis application: MIT
-- Freeverb: MIT (Paul Stoffregen / PJRC, original Jezar public domain)
+- Freeverb: public domain (Jezar at Dreampoint)
 - micromod: BSD-3-Clause (Martin Cameron)
 - Helix MP3 decoder: RPSL (RealNetworks)
 - MegaWifi firmware: GPL-3.0 (upstream by doragasu)

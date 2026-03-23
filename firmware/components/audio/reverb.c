@@ -2,9 +2,8 @@
  * @file reverb.c
  * @brief Fixed-point Freeverb (Jezar/Schroeder-Moorer)
  *
- * Ported from PaulStoffregen/Audio (Teensy Audio Library), MIT license.
  * Original algorithm: Jezar at Dreampoint, public domain.
- * Pure C port: (c) 2026 Mike Wolak <mikewolak@gmail.com>
+ * Fixed-point C port: (c) 2026 Mike Wolak <mikewolak@gmail.com>
  *
  * 8 parallel comb filters → sum → 4 series allpass filters.
  * All arithmetic: int16/int32, no float.
