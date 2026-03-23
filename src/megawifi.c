@@ -1648,8 +1648,7 @@ enum mw_err mw_aud_resume(void)
 	return mw_command(MW_AUD_TOUT);
 }
 
-enum mw_err mw_aud_status(uint8_t *state, uint8_t *pattern, uint8_t *row,
-		uint8_t *song_len, uint8_t *amplitudes)
+enum mw_err mw_aud_status(uint32_t *vu_word, uint32_t *pos_word)
 {
 	enum mw_err err;
 	if (!d.mw_ready) return MW_ERR_NOT_READY;
@@ -1657,11 +1656,9 @@ enum mw_err mw_aud_status(uint8_t *state, uint8_t *pattern, uint8_t *row,
 	d.cmd->data_len = 0;
 	err = mw_command(MW_AUD_TOUT);
 	if (err != MW_ERR_NONE) return err;
-	if (state)      *state      = d.cmd->data[0];
-	if (pattern)    *pattern    = d.cmd->data[1];
-	if (row)        *row        = d.cmd->data[2];
-	if (song_len)   *song_len   = d.cmd->data[3];
-	if (amplitudes) memcpy(amplitudes, &d.cmd->data[4], 8);
+	/* 68k is big-endian, firmware sends big-endian — direct read */
+	if (vu_word)  *vu_word  = d.cmd->dw_data[0];
+	if (pos_word) *pos_word = d.cmd->dw_data[1];
 	return MW_ERR_NONE;
 }
 
