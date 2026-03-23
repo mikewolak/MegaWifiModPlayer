@@ -21,6 +21,7 @@
 #include "mixer.h"
 #include "pwm_audio.h"
 #include "reverb.h"
+#include "esp_cpu.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -84,6 +85,10 @@ static struct {
     bool            reverb_enabled;
     uint8_t         reverb_return;  /* return level 0-255 */
 
+    /* ISR CPU profiling */
+    volatile uint32_t isr_cycles_avg;   /* smoothed cycle count per ISR call */
+    volatile uint8_t  cpu_pct;          /* 0-100 CPU busy percentage */
+
     bool            initialised;
 } s_mix;
 
@@ -112,8 +117,13 @@ static inline uint32_t ch_ring_free(channel_t *c)
  *   output = (dry_l + rev_l) * master ──→ LEDC left
  *            (dry_r + rev_r) * master ──→ LEDC right
  */
+/* 160 MHz / 44053 Hz = 3632 cycles per ISR call = 100% CPU */
+#define ISR_CYCLES_100PCT  3632
+
 static IRAM_ATTR pwm_audio_sample_t mixer_isr(void *ctx)
 {
+    uint32_t _isr_start = esp_cpu_get_cycle_count();
+
     int32_t sum_l = 0;
     int32_t sum_r = 0;
     int32_t reverb_send_bus = 0;    /* mono reverb send */
@@ -210,6 +220,14 @@ static IRAM_ATTR pwm_audio_sample_t mixer_isr(void *ctx)
     if (sum_l > 4095) sum_l = 4095;
     if (sum_r < 0) sum_r = 0;
     if (sum_r > 4095) sum_r = 4095;
+
+    /* ISR CPU profiling — smoothed IIR, updated every call */
+    {
+        uint32_t elapsed = esp_cpu_get_cycle_count() - _isr_start;
+        s_mix.isr_cycles_avg = (s_mix.isr_cycles_avg * 15 + elapsed) >> 4;
+        s_mix.cpu_pct = (uint8_t)(s_mix.isr_cycles_avg * 100 / ISR_CYCLES_100PCT);
+        if (s_mix.cpu_pct > 100) s_mix.cpu_pct = 100;
+    }
 
     pwm_audio_sample_t out = { .l = (uint16_t)sum_l, .r = (uint16_t)sum_r };
     return out;
@@ -388,6 +406,11 @@ void mixer_get_amplitudes(uint8_t *out)
 uint8_t mixer_get_master_vol(void)
 {
     return s_mix.master_vol;
+}
+
+uint8_t mixer_get_cpu_pct(void)
+{
+    return s_mix.cpu_pct;
 }
 
 /* ── Public API: reverb send/return ──────────────────────────────────────── */

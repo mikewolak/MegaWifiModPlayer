@@ -157,6 +157,7 @@
 #define MW_CMD_AUD_REVERB_MIX		 68	///< Set reverb wet (2 bytes: Q1.14)
 #define MW_CMD_AUD_REVERB_DECAY		 69	///< Set reverb decay (2 bytes: Q1.14)
 #define MW_CMD_AUD_REVERB_SEND		 70	///< Set ch reverb send (2 bytes: ch, level)
+#define MW_CMD_AUD_CPU_PCT		 71	///< Get ISR CPU busy % (1 byte reply)
 #define MW_CMD_ERROR			255	///< Error command reply
 /** \} */
 

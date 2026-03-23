@@ -30,6 +30,7 @@ extern enum mw_err mw_aud_pause(void);
 extern enum mw_err mw_aud_resume(void);
 extern enum mw_err mw_aud_status(uint32_t *vu_word, uint32_t *pos_word);
 extern enum mw_err mw_aud_set_vol(uint8_t vol);
+extern enum mw_err mw_aud_cpu_pct(uint8_t *pct);
 
 #define FPS 60
 
@@ -44,6 +45,7 @@ extern enum mw_err mw_aud_set_vol(uint8_t vol);
 #define ROW_VOL_LABEL   22
 #define ROW_VOL_BAR     23
 #define ROW_HELP        24
+#define ROW_CPU         25
 #define ROW_MARQUEE     26
 #define ROW_FOOTER      27
 
@@ -85,6 +87,7 @@ static u8  g_pattern = 0;
 static u8  g_row = 0;
 static u8  g_song_len = 0;
 static bool g_mw_connected = FALSE;
+static u8  g_cpu_pct = 0;
 
 static uint16_t cmd_buf[MW_BUFLEN / 2];
 
@@ -132,6 +135,7 @@ static void load_tiles(void)
 static void setup_palettes(void)
 {
     PAL_setColor(0,  RGB24_TO_VDPCOLOR(0x000000));
+    PAL_setColor(14, RGB24_TO_VDPCOLOR(0xDDCC00));  /* yellow text for CPU warning */
     PAL_setColor(15, RGB24_TO_VDPCOLOR(0xFFFFFF));
     PAL_setColor(16, RGB24_TO_VDPCOLOR(0x000000));
     PAL_setColor(17, RGB24_TO_VDPCOLOR(0x00DD44));  /* 1: green */
@@ -291,6 +295,34 @@ static void draw_volume_text(void)
     VDP_setTextPalette(PAL0);
 }
 
+/* ── CPU indicator ────────────────────────────────────────────────────────── */
+
+static u8 s_prev_cpu = 0xFF;
+
+static void draw_cpu(void)
+{
+    char buf[41];
+    u16 pal;
+    char *p;
+
+    if (g_cpu_pct == s_prev_cpu) return;
+    s_prev_cpu = g_cpu_pct;
+
+    if (g_cpu_pct >= 90) pal = PAL2;       /* red */
+    else if (g_cpu_pct >= 76) pal = PAL3;   /* yellow/warning (cyan) */
+    else pal = PAL1;                         /* green */
+
+    memset(buf, ' ', 40); buf[40] = '\0';
+    p = buf + 2;
+    memcpy(p, "ESP32-C3 CPU: ", 14); p += 14;
+    p = itoa_simple(g_cpu_pct, p);
+    *p++ = '%';
+
+    VDP_setTextPalette(pal);
+    VDP_drawText(buf, 0, ROW_CPU);
+    VDP_setTextPalette(PAL0);
+}
+
 /* ── Static UI ───────────────────────────────────────────────────────────── */
 
 static void draw_reverb_status(void)
@@ -437,7 +469,9 @@ static void main_redraw(void)
     draw_status();
     draw_volume_bar();
     draw_volume_text();
+    draw_cpu();
     s_prev_state = 0xFF;
+    s_prev_cpu = 0xFF;
 }
 
 static void handle_input(void)
@@ -539,13 +573,23 @@ int main(bool hard)
 
     mw_set_draw_hook(frame_draw_hook);
 
-    while (1) {
-        VDP_waitVSync();
-        update_marquee();
-        draw_status();
-        update_vu_sprites();
-        handle_input();
-        poll_status();
+    {
+        u8 cpu_poll_ctr = 0;
+        while (1) {
+            VDP_waitVSync();
+            update_marquee();
+            draw_status();
+            draw_cpu();
+            update_vu_sprites();
+            handle_input();
+            poll_status();
+
+            /* Poll CPU % every 30 frames (~0.5 sec) */
+            if (g_mw_connected && ++cpu_poll_ctr >= 30) {
+                cpu_poll_ctr = 0;
+                mw_aud_cpu_pct(&g_cpu_pct);
+            }
+        }
     }
 
     return 0;

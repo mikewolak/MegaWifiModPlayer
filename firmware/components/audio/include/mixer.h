@@ -86,6 +86,9 @@ void mixer_set_master_vol(uint8_t vol);
 /** Get current master volume. */
 uint8_t mixer_get_master_vol(void);
 
+/** Get ISR CPU usage percentage (0-100). */
+uint8_t mixer_get_cpu_pct(void);
+
 /**
  * Read peak amplitudes for all 8 channels (0–255 each).
  * Resets the peaks after reading (peak-and-clear for VU meters).

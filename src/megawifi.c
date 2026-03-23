@@ -1677,6 +1677,7 @@ enum mw_err mw_aud_set_vol(uint8_t vol)
 #define MW_CMD_AUD_REVERB_MIX     68
 #define MW_CMD_AUD_REVERB_DECAY   69
 #define MW_CMD_AUD_REVERB_SEND    70
+#define MW_CMD_AUD_CPU_PCT        71
 
 enum mw_err mw_aud_reverb_enable(uint8_t on)
 {
@@ -1722,6 +1723,18 @@ enum mw_err mw_aud_reverb_send(uint8_t ch, uint8_t level)
 	d.cmd->data[0] = ch;
 	d.cmd->data[1] = level;
 	return mw_command(MW_AUD_TOUT);
+}
+
+enum mw_err mw_aud_cpu_pct(uint8_t *pct)
+{
+	enum mw_err err;
+	if (!d.mw_ready) return MW_ERR_NOT_READY;
+	d.cmd->cmd = MW_CMD_AUD_CPU_PCT;
+	d.cmd->data_len = 0;
+	err = mw_command(MW_AUD_TOUT);
+	if (err != MW_ERR_NONE) return err;
+	if (pct) *pct = d.cmd->data[0];
+	return MW_ERR_NONE;
 }
 
 #endif // MODULE_MEGAWIFI
