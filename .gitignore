@@ -1,0 +1,4 @@
+out/*.o
+out/*.out
+nvram/
+cfg/

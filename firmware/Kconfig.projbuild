@@ -1,0 +1,20 @@
+menu "MegaWiFi options"
+
+config MW_HTTP_USE_ESP
+	bool "Use esp_http_client (HTTPS-capable)"
+	default n
+	help
+	  If enabled, the firmware uses ESP-IDF's esp_http_client (supports HTTPS).
+	  If disabled (default), a minimal plain-HTTP socket client is used to
+	  avoid the esp_http_client transport issues seen on some firmware builds.
+
+config MW_AUDIO_ENABLE
+	bool "Enable PWM audio subsystem"
+	default n
+	help
+	  If enabled, builds the audio component (Helix MP3 decoder, PWM driver,
+	  ring buffer player) and embeds the test MP3 in flash. Disable to save
+	  ~1.8 MB of flash and reduce binary size. Requires hardware cap mod
+	  (C16/C17 → 10-22nF) for acceptable audio quality.
+
+endmenu
