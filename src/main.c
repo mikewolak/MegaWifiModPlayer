@@ -1,8 +1,10 @@
 /*
  * main.c — MegaWifi MOD Player for Sega Genesis
  *
- * Per-pixel VU meters using partial-fill tiles on BG_B.
- * Packed 32-bit status word polled every frame.
+ * VU meters use per-column vertical scroll on BG_B.
+ * Pre-colored gradient tiles fill BG_B at init.
+ * During playback, only VSRAM writes control bar height.
+ * Zero tile writes during gameplay = zero flicker.
  */
 
 #include <genesis.h>
@@ -35,27 +37,28 @@ extern enum mw_err mw_aud_set_vol(uint8_t vol);
 #define ROW_MARQUEE     26
 #define ROW_FOOTER      27
 
-#define VU_NUM_ROWS     (ROW_VU_END - ROW_VU_START + 1)  /* 16 */
-#define VU_TOTAL_PX     (VU_NUM_ROWS * 8)                 /* 128 */
+#define VU_NUM_ROWS     16      /* tile rows in VU area */
+#define VU_TOTAL_PX     128     /* VU_NUM_ROWS * 8 */
 
-#define VU_CH_WIDTH     7
-#define VU_CH_GAP       1
-#define VU_CH_OFFSET    3
+/*
+ * Each VU channel = 4 columns (2 scroll groups of 2 columns each).
+ * 4 channels with 6-column gaps:  4+6+4+6+4+6+4 = 34, offset 3.
+ * Column scroll groups: each group = 2 columns.
+ */
+#define VU_CH_WIDTH     4       /* columns per channel (MUST be even) */
+#define VU_CH_GAP       4       /* gap between channels (MUST be even) */
+#define VU_CH_OFFSET    2       /* first column (MUST be even) */
 
+/* Volume bar */
 #define VOL_BAR_OFFSET  7
 #define VOL_BAR_WIDTH   26
 
-/* ── VU tiles ────────────────────────────────────────────────────────────── */
+/* ── Tiles ───────────────────────────────────────────────────────────────── */
 #define T_BLACK         (TILE_USER_INDEX + 0)
 #define T_GREEN         (TILE_USER_INDEX + 1)
 #define T_YELLOW        (TILE_USER_INDEX + 2)
 #define T_RED           (TILE_USER_INDEX + 3)
-#define T_PEAK          (TILE_USER_INDEX + 4)
-#define T_BLUE          (TILE_USER_INDEX + 5)
-#define T_GREEN_P(n)    (TILE_USER_INDEX + 6 + (n))
-#define T_YELLOW_P(n)   (TILE_USER_INDEX + 14 + (n))
-#define T_RED_P(n)      (TILE_USER_INDEX + 22 + (n))
-#define T_BLUE_P(n)     (TILE_USER_INDEX + 30 + (n))
+#define T_BLUE          (TILE_USER_INDEX + 4)
 
 /* ── State ───────────────────────────────────────────────────────────────── */
 #define PS_STOPPED  0
@@ -64,8 +67,8 @@ extern enum mw_err mw_aud_set_vol(uint8_t vol);
 
 static u8               g_state = PS_STOPPED;
 static u8               g_master_vol = 255;
-static u8               g_vu_raw[4] = {0};   /* raw 0-127 from firmware */
-static u8               g_vu_px[4] = {0};    /* smoothed display height */
+static u8               g_vu_raw[4] = {0};
+static u8               g_vu_px[4] = {0};    /* smoothed display height 0-127 */
 static u8               g_vu_peak[4] = {0};
 static u8               g_vu_decay[4] = {0};
 static u8               g_pattern = 0;
@@ -95,7 +98,7 @@ static void hex_byte(u8 val, char *buf)
     buf[1] = h[val & 0xF];
 }
 
-/* ── Tile generation ─────────────────────────────────────────────────────── */
+/* ── Tile + palette init ─────────────────────────────────────────────────── */
 
 static void make_solid(u32 *t, u8 c)
 {
@@ -104,36 +107,14 @@ static void make_solid(u32 *t, u8 c)
     for (i = 0; i < 8; i++) t[i] = r;
 }
 
-static void make_partial(u32 *t, u8 c, u8 lines)
+static void load_tiles(void)
 {
-    u32 r = 0; u8 i;
-    for (i = 0; i < 8; i++) r |= ((u32)c << (28 - i * 4));
-    for (i = 0; i < 8; i++) t[i] = (i >= (8 - lines)) ? r : 0;
-}
-
-static void load_vu_tiles(void)
-{
-    u32 t[8]; u8 n;
-
+    u32 t[8];
     make_solid(t, 0); VDP_loadTileData(t, T_BLACK, 1, CPU);
     make_solid(t, 1); VDP_loadTileData(t, T_GREEN, 1, CPU);
     make_solid(t, 2); VDP_loadTileData(t, T_YELLOW, 1, CPU);
     make_solid(t, 3); VDP_loadTileData(t, T_RED, 1, CPU);
     make_solid(t, 5); VDP_loadTileData(t, T_BLUE, 1, CPU);
-
-    { u32 line = 0; u8 i;
-      for (i = 0; i < 8; i++) line |= ((u32)4 << (28 - i * 4));
-      for (i = 0; i < 8; i++) t[i] = 0;
-      t[3] = line; t[4] = line;
-      VDP_loadTileData(t, T_PEAK, 1, CPU);
-    }
-
-    for (n = 0; n < 8; n++) {
-        make_partial(t, 1, n+1); VDP_loadTileData(t, T_GREEN_P(n), 1, CPU);
-        make_partial(t, 2, n+1); VDP_loadTileData(t, T_YELLOW_P(n), 1, CPU);
-        make_partial(t, 3, n+1); VDP_loadTileData(t, T_RED_P(n), 1, CPU);
-        make_partial(t, 5, n+1); VDP_loadTileData(t, T_BLUE_P(n), 1, CPU);
-    }
 }
 
 static void setup_palettes(void)
@@ -144,7 +125,6 @@ static void setup_palettes(void)
     PAL_setColor(17, RGB24_TO_VDPCOLOR(0x00DD44));  /* green */
     PAL_setColor(18, RGB24_TO_VDPCOLOR(0xDDCC00));  /* yellow */
     PAL_setColor(19, RGB24_TO_VDPCOLOR(0xEE2222));  /* red */
-    PAL_setColor(20, RGB24_TO_VDPCOLOR(0xFFFFFF));  /* peak */
     PAL_setColor(21, RGB24_TO_VDPCOLOR(0x2288EE));  /* blue */
     PAL_setColor(31, RGB24_TO_VDPCOLOR(0x00FF66));
     PAL_setColor(32, RGB24_TO_VDPCOLOR(0x000000));
@@ -153,80 +133,102 @@ static void setup_palettes(void)
     PAL_setColor(63, RGB24_TO_VDPCOLOR(0x00CCFF));
 }
 
-/* ── VU bar: full redraw, per-pixel edge ─────────────────────────────────── */
-
-static void vu_fill_row(u16 col, u16 row, u16 tile, u8 width)
+/* ── Init BG_B with pre-colored gradient for VU scroll trick ─────────────── */
+/*
+ * Nametable layout for each VU column on BG_B (32 rows, wrapping):
+ *   Rows 6-21:  BLACK tiles (VU screen area — hidden at VSCROLL=0)
+ *   Rows 22-31: gradient bottom (GREEN, first to appear when scrolling)
+ *   Rows 0-5:   gradient top (YELLOW → RED, last to appear)
+ *
+ * VSCROLL = H scrolls UP by H pixels:
+ *   H=0:   all black in VU area
+ *   H=128: full gradient visible (green bottom, red top)
+ */
+static void init_vu_bg(void)
 {
-    u8 c;
-    for (c = 0; c < width; c++)
-        VDP_setTileMapXY(BG_B, tile, col + c, row);
-}
-
-static void draw_vu_bar(u8 ch)
-{
-    u16 col = VU_CH_OFFSET + ch * (VU_CH_WIDTH + VU_CH_GAP);
-    u8 h = g_vu_px[ch];  /* 0-127 pixel height */
-    if (h > VU_TOTAL_PX) h = VU_TOTAL_PX;
-
-    u8 full_rows = h >> 3;        /* h / 8 */
-    u8 partial   = h & 7;         /* h % 8 */
-    u8 peak_h    = g_vu_peak[ch];
-    u8 peak_row  = peak_h >> 3;
+    u8 ch, c, g;
     u16 r;
 
-    for (r = 0; r < VU_NUM_ROWS; r++) {
-        u16 screen_row = ROW_VU_END - r;
-        u16 tile;
+    /* Clear ALL VSRAM to 0 (no scroll) */
+    for (g = 0; g < 20; g++) {
+        u16 addr = g * 4 + 2;  /* BG_B entry for each column group */
+        vu32 *ctrl = (vu32*)0xC00004;
+        vu16 *data = (vu16*)0xC00000;
+        *ctrl = 0x40000010 | ((u32)(addr & 0x3FFF) << 16);
+        *data = 0;
+    }
 
-        if (r < full_rows) {
-            /* Full bar row — green/yellow/red by height */
-            u8 pix = r * 8 + 4;
-            if (pix >= VU_TOTAL_PX * 4 / 5)
-                tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_RED);
-            else if (pix >= VU_TOTAL_PX * 3 / 5)
-                tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_YELLOW);
-            else
-                tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_GREEN);
-        } else if (r == full_rows && partial > 0) {
-            /* Edge row — partial fill tile */
-            u8 pix = r * 8 + partial / 2;
-            u16 base;
-            if (pix >= VU_TOTAL_PX * 4 / 5)
-                base = T_RED_P(partial - 1);
-            else if (pix >= VU_TOTAL_PX * 3 / 5)
-                base = T_YELLOW_P(partial - 1);
-            else
-                base = T_GREEN_P(partial - 1);
-            tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, base);
-        } else if (r == peak_row && peak_h > h && peak_h > 0) {
-            /* Peak hold line */
-            tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_PEAK);
-        } else {
-            /* Empty */
-            tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_BLACK);
+    /* Fill gradient tiles ONLY in even-aligned VU channel columns */
+    for (ch = 0; ch < 4; ch++) {
+        u16 col_start = VU_CH_OFFSET + ch * (VU_CH_WIDTH + VU_CH_GAP);
+
+        for (c = 0; c < VU_CH_WIDTH; c++) {
+            u16 col = col_start + c;
+
+            /* ALL 32 rows of this column get tiles.
+             * Rows 6-21: black (VU screen area, visible at VSCROLL=0)
+             * Rows 22-31: green (10 rows, bottom of bar)
+             * Rows 0-2: yellow (3 rows, mid bar)
+             * Rows 3-5: red (3 rows, top of bar) */
+            for (r = 0; r < 32; r++) {
+                u16 tile;
+                if (r >= ROW_VU_START && r <= ROW_VU_END)
+                    tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_BLACK);
+                else if (r >= 22)
+                    tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_GREEN);
+                else if (r <= 2)
+                    tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_YELLOW);
+                else
+                    tile = TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_RED);
+                VDP_setTileMapXY(BG_B, tile, col, r);
+            }
         }
-
-        vu_fill_row(col, screen_row, tile, VU_CH_WIDTH);
     }
 }
 
-static void update_vu_meters(void)
+/* ── Set VU bar height via VSRAM (per-column vertical scroll) ────────────── */
+/*
+ * VSRAM has 20 entries in H40 mode, each controlling a 2-cell column pair.
+ * Each entry = 2 words: BG_A scroll, BG_B scroll.
+ * We write BG_B scroll for each column group in the VU channels.
+ *
+ * VSRAM address for column group G, plane B:
+ *   addr = G * 4 + 2   (offset 2 for plane B)
+ *
+ * VDP command for VSRAM write:
+ *   0x40000010 | ((addr & 0x3FFF) << 16) | ((addr >> 14) & 3)
+ */
+static void set_vu_scroll(u8 ch, u16 height_px)
+{
+    u16 col_start = VU_CH_OFFSET + ch * (VU_CH_WIDTH + VU_CH_GAP);
+    u8 groups = VU_CH_WIDTH / 2;  /* 2 scroll groups per 4-col channel */
+    u8 g;
+
+    for (g = 0; g < groups; g++) {
+        u16 col_group = (col_start / 2) + g;
+        u16 vsram_addr = col_group * 4 + 2;  /* +2 for plane B */
+
+        vu32 *ctrl = (vu32*)0xC00004;
+        vu16 *data = (vu16*)0xC00000;
+
+        *ctrl = 0x40000010 | ((u32)(vsram_addr & 0x3FFF) << 16);
+        *data = height_px;
+    }
+}
+
+/* ── Smooth and set VU heights ───────────────────────────────────────────── */
+
+static void update_vu(void)
 {
     u8 ch;
     for (ch = 0; ch < 4; ch++) {
         u8 raw = g_vu_raw[ch];
         u8 cur = g_vu_px[ch];
 
-        /*
-         * Ballistic IIR filter:
-         *   Attack: fast rise — chase the signal in ~3 frames
-         *   Decay:  slow fall — smooth drop over ~12 frames
-         */
+        /* Ballistic IIR: fast attack, slow decay */
         if (raw > cur) {
-            /* Fast attack: jump 3/4 of the way there */
             cur += ((raw - cur) * 3 + 2) >> 2;
         } else if (cur > 0) {
-            /* Slow decay: fall by 1/8 of current + 1 */
             u8 drop = (cur >> 3) + 1;
             if (drop > cur) cur = 0;
             else cur -= drop;
@@ -234,23 +236,12 @@ static void update_vu_meters(void)
         }
         g_vu_px[ch] = cur;
 
-        /* Peak hold — snap up, hold briefly, then smooth fall */
-        if (cur > g_vu_peak[ch]) {
-            g_vu_peak[ch] = cur;
-            g_vu_decay[ch] = 20;    /* hold for ~0.3 sec */
-        } else if (g_vu_decay[ch] > 0) {
-            g_vu_decay[ch]--;
-        } else if (g_vu_peak[ch] > 0) {
-            /* Smooth gravity fall — accelerates as it drops */
-            u8 drop = (g_vu_peak[ch] >> 4) + 1;
-            g_vu_peak[ch] = (drop >= g_vu_peak[ch]) ? 0 : g_vu_peak[ch] - drop;
-        }
-
-        draw_vu_bar(ch);
+        /* Set vertical scroll = bar height in pixels */
+        set_vu_scroll(ch, cur);
     }
 }
 
-/* ── Volume bar ──────────────────────────────────────────────────────────── */
+/* ── Volume bar (BG_A tiles, only on press) ──────────────────────────────── */
 
 static void draw_volume_bar(void)
 {
@@ -260,7 +251,7 @@ static void draw_volume_bar(void)
         u16 tile = (c < filled)
             ? TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_BLUE)
             : TILE_ATTR_FULL(PAL1, FALSE, FALSE, FALSE, T_BLACK);
-        VDP_setTileMapXY(BG_B, tile, VOL_BAR_OFFSET + c, ROW_VOL_BAR);
+        VDP_setTileMapXY(BG_A, tile, VOL_BAR_OFFSET + c, ROW_VOL_BAR);
     }
 }
 
@@ -276,12 +267,24 @@ static void draw_volume_text(void)
     VDP_setTextPalette(PAL0);
 }
 
-/* ── Static UI ───────────────────────────────────────────────────────────── */
+/* ── Static UI (BG_A) ────────────────────────────────────────────────────── */
 
 static void draw_static_ui(void)
 {
     u8 ch;
+    u16 r, c;
     char label[41];
+
+    /* Fill ALL BG_A rows outside VU area with opaque black tile (HIGH priority).
+     * This masks the BG_B gradient tiles that wrap around above/below the VU zone. */
+    {
+        u16 black_tile = TILE_ATTR_FULL(PAL1, TRUE, FALSE, FALSE, T_BLACK);
+        for (r = 0; r < 32; r++) {
+            if (r >= ROW_VU_START && r <= ROW_VU_END) continue;
+            for (c = 0; c < 40; c++)
+                VDP_setTileMapXY(BG_A, black_tile, c, r);
+        }
+    }
 
     VDP_setTextPalette(PAL3);
     VDP_drawText("====== MEGAWIFI MOD PLAYER ======", 3, ROW_TITLE);
@@ -304,11 +307,21 @@ static void draw_static_ui(void)
 
 /* ── Status line ─────────────────────────────────────────────────────────── */
 
+static u8  s_prev_state = 0xFF;
+static u8  s_prev_pat = 0xFF;
+static u8  s_prev_row = 0xFF;
+
 static void draw_status(void)
 {
     char buf[41];
     u16 pal;
     char *p;
+
+    if (g_state == s_prev_state && g_pattern == s_prev_pat && g_row == s_prev_row)
+        return;
+    s_prev_state = g_state;
+    s_prev_pat = g_pattern;
+    s_prev_row = g_row;
 
     memset(buf, ' ', 40); buf[40] = '\0';
     switch (g_state) {
@@ -330,27 +343,22 @@ static void draw_status(void)
     VDP_setTextPalette(PAL0);
 }
 
-/* ── Poll — unpack packed 32-bit words ───────────────────────────────────── */
+/* ── Poll firmware ───────────────────────────────────────────────────────── */
 
 static void poll_status(void)
 {
     uint32_t vu_word, pos_word;
-
     if (!g_mw_connected) return;
 
     if (mw_aud_status(&vu_word, &pos_word) == MW_ERR_NONE) {
-        /* Word 0: VU + state */
         g_state      = (vu_word >> 30) & 0x03;
         g_vu_raw[3]  = (vu_word >> 23) & 0x7F;
         g_vu_raw[2]  = (vu_word >> 16) & 0x7F;
         g_vu_raw[1]  = (vu_word >> 9)  & 0x7F;
         g_vu_raw[0]  = (vu_word >> 2)  & 0x7F;
-
-        /* Word 1: position */
         g_pattern  = (pos_word >> 24) & 0xFF;
         g_row      = (pos_word >> 16) & 0xFF;
         g_song_len = (pos_word >> 8)  & 0xFF;
-        /* master_vol = pos_word & 0xFF — we track locally */
     }
 }
 
@@ -398,7 +406,17 @@ static void update_marquee(void)
     }
 }
 
-static void frame_draw_hook(void) { update_marquee(); }
+/* Draw hook — fires every frame during poll waits.
+ * VSRAM writes are tiny and safe anytime. */
+static void frame_draw_hook(void)
+{
+    static u32 last_frame = 0;
+    u32 frame = vtimer;
+    if (frame == last_frame) return;
+    last_frame = frame;
+    update_marquee();
+    update_vu();        /* 8 VSRAM writes — trivial */
+}
 
 /* ── Input ───────────────────────────────────────────────────────────────── */
 
@@ -406,7 +424,6 @@ static void handle_input(void)
 {
     u16 joy, pressed;
     static u16 prev_joy = 0;
-
     JOY_update();
     joy = JOY_readJoypad(JOY_1);
     pressed = joy & ~prev_joy;
@@ -466,11 +483,12 @@ int main(bool hard)
     VDP_clearPlane(BG_B, TRUE);
 
     setup_palettes();
-    load_vu_tiles();
+    load_tiles();
     draw_static_ui();
     draw_status();
     draw_volume_bar();
     draw_volume_text();
+    init_vu_bg();
 
     JOY_init();
 
@@ -489,11 +507,15 @@ int main(bool hard)
 
     while (1) {
         VDP_waitVSync();
+
+        /* VBlank: tiny writes only */
         update_marquee();
+        draw_status();
+        update_vu();    /* 8 VSRAM writes total — trivial */
+
+        /* Active display */
         handle_input();
         poll_status();
-        draw_status();
-        update_vu_meters();
     }
 
     return 0;
