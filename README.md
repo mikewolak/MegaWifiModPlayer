@@ -106,6 +106,20 @@ Each of the 8 channels independently controls:
 The reverb runs continuously — when the MOD stops, the tail
 decays naturally through the allpass/comb filter network.
 
+## Audio Decoders
+
+The firmware includes two fixed-point audio decoders:
+
+| Decoder | Format | Library | License |
+|---------|--------|---------|---------|
+| **micromod** | ProTracker MOD (4/8 ch) | Martin Cameron | BSD-3 |
+| **Helix** | MP3 (MPEG Layer III) | RealNetworks | RPSL |
+
+Both decoders use integer-only arithmetic — no floating point.
+The MOD player is the primary decoder used by this application.
+The Helix MP3 decoder is available in the firmware for other
+applications (e.g., streaming internet audio, playback from flash).
+
 ## Reverb Engine
 
 Jezar's Freeverb algorithm (Schroeder-Moorer topology), ported
